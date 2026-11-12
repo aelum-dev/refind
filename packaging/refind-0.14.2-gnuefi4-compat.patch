@@ -1,0 +1,353 @@
+--- a/EfiLib/BdsTianoCore.c
++++ b/EfiLib/BdsTianoCore.c
+@@ -242,16 +242,16 @@
+   Option->Signature   = BDS_LOAD_OPTION_SIGNATURE;
+   Option->DevicePath  = AllocateZeroPool (GetDevicePathSize (DevicePath));
+   ASSERT(Option->DevicePath != NULL);
+-  CopyMem (Option->DevicePath, DevicePath, GetDevicePathSize (DevicePath));
++  MyCopyMem (Option->DevicePath, DevicePath, GetDevicePathSize (DevicePath));
+ 
+   Option->Attribute   = Attribute;
+   Option->Description = AllocateZeroPool (StrSize (Description));
+   ASSERT(Option->Description != NULL);
+-  CopyMem (Option->Description, Description, StrSize (Description));
++  MyCopyMem (Option->Description, Description, StrSize (Description));
+ 
+   Option->LoadOptions = AllocateZeroPool (LoadOptionsSize);
+   ASSERT(Option->LoadOptions != NULL);
+-  CopyMem (Option->LoadOptions, LoadOptions, LoadOptionsSize);
++  MyCopyMem (Option->LoadOptions, LoadOptions, LoadOptionsSize);
+   Option->LoadOptionsSize = LoadOptionsSize;
+ 
+   //
+--- a/EfiLib/gnuefi-helper.c
++++ b/EfiLib/gnuefi-helper.c
+@@ -109,26 +109,11 @@
+   @return The length of String.
+ 
+ **/
+-UINTN
+-AsciiStrLen (
+-  IN      CONST CHAR8               *String
+-  )
+-{
+-  UINTN                             Length;
+-
+-  ASSERT (String != NULL);
+-
+-  for (Length = 0; *String != '\0'; String++, Length++) {
+-//     //
+-//     // If PcdMaximumUnicodeStringLength is not zero,
+-//     // length should not more than PcdMaximumUnicodeStringLength
+-//     //
+-//     if (PcdGet32 (PcdMaximumAsciiStringLength) != 0) {
+-//       ASSERT (Length < PcdGet32 (PcdMaximumAsciiStringLength));
+-//     }
+-  }
+-  return Length;
+-}
++// AsciiStrLen is not defined here: gnu-efi 4.0 and later provide it in
++// libefi (declared in <efi/efilib.h>) with the same signature. Defining it
++// here too makes the link fail with "multiple definition of AsciiStrLen";
++// the declaration in gnuefi-helper.h still covers this file's callers, and
++// the linker resolves it from libefi.
+ 
+ /**
+   Determine whether a given device path is valid.
+--- a/EfiLib/legacy.c
++++ b/EfiLib/legacy.c
+@@ -20,7 +20,6 @@
+ #include "efilib.h"
+ #include "gnuefi-helper.h"
+ #define EFI_DEVICE_PATH_PROTOCOL EFI_DEVICE_PATH
+-#define EfiReallocatePool ReallocatePool
+ #define EfiLibLocateProtocol LibLocateProtocol
+ #else
+ #include "../include/tiano_includes.h"
+@@ -31,6 +30,28 @@
+ #include "../refind/lib.h"
+ #include "../include/refit_call_wrapper.h"
+ 
++#ifdef __MAKEWITH_GNUEFI
++// GNU-EFI 4.0 marks ReallocatePool EFIAPI, and distributions build its library
++// with GNU_EFI_USE_MS_ABI=1 (the Microsoft x64 ABI); calling it from this
++// SysV-compiled code passes the arguments in the wrong registers. Do the work
++// here instead, with the same semantics as gnu-efi's: allocate a new pool,
++// copy the common prefix, and free the old pool even when the new allocation
++// failed. (Same fix as refind/lib.c.)
++static VOID *EfiReallocatePool(VOID *OldPool, UINTN OldSize, UINTN NewSize) {
++    VOID *NewPool;
++
++    NewPool = NULL;
++    if (NewSize != 0)
++        NewPool = AllocatePool(NewSize);
++    if (OldPool != NULL) {
++        if (NewPool != NULL)
++            MyCopyMem(NewPool, OldPool, OldSize < NewSize ? OldSize : NewSize);
++        MyFreePool(OldPool);
++    }
++    return NewPool;
++}
++#endif
++
+ BOOT_OPTION_BBS_MAPPING  *mBootOptionBbsMapping     = NULL;
+ UINTN                    mBootOptionBbsMappingCount = 0;
+ 
+@@ -399,8 +420,8 @@
+   if (NewBbsDevPathNode == NULL) {
+     return EFI_OUT_OF_RESOURCES;
+   }
+-  CopyMem (NewBbsDevPathNode, CurrentBbsDevPath, sizeof (BBS_BBS_DEVICE_PATH));
+-  CopyMem (NewBbsDevPathNode->String, HelpString, StringLen + 1);
++  MyCopyMem (NewBbsDevPathNode, CurrentBbsDevPath, sizeof (BBS_BBS_DEVICE_PATH));
++  MyCopyMem (NewBbsDevPathNode->String, HelpString, StringLen + 1);
+   SetDevicePathNodeLength (&(NewBbsDevPathNode->Header), sizeof (BBS_BBS_DEVICE_PATH) + StringLen);
+ 
+   //
+@@ -439,21 +460,21 @@
+   *((UINT16 *) Ptr) = CurrentBbsDevPathSize;
+   Ptr += sizeof (UINT16);
+ 
+-  CopyMem (
++  MyCopyMem (
+     Ptr,
+     BootDesc,
+     StrSize (BootDesc)
+     );
+   Ptr += StrSize (BootDesc);
+ 
+-  CopyMem (
++  MyCopyMem (
+     Ptr,
+     CurrentBbsDevPath,
+     CurrentBbsDevPathSize
+     );
+   Ptr += CurrentBbsDevPathSize;
+ 
+-  CopyMem (
++  MyCopyMem (
+     Ptr,
+     CurrentBbsEntry,
+     sizeof (BBS_TABLE)
+@@ -476,7 +497,7 @@
+   }
+ 
+   if (*BootOrderList != NULL) {
+-    CopyMem (NewBootOrderList, *BootOrderList, *BootOrderListSize);
++    MyCopyMem (NewBootOrderList, *BootOrderList, *BootOrderListSize);
+     MyFreePool (*BootOrderList);
+   }
+ 
+@@ -524,7 +545,7 @@
+   BbsDevPathNode.Header.SubType = BBS_BBS_DP;
+   SetDevicePathNodeLength (&BbsDevPathNode.Header, sizeof (BBS_BBS_DEVICE_PATH));
+   BbsDevPathNode.DeviceType = BbsItem->DeviceType;
+-  CopyMem (&BbsDevPathNode.StatusFlag, &BbsItem->StatusFlags, sizeof (UINT16));
++  MyCopyMem (&BbsDevPathNode.StatusFlag, &BbsItem->StatusFlags, sizeof (UINT16));
+ 
+   DevPath = AppendDevicePathNode (
+               EndDevicePath,
+@@ -579,7 +600,7 @@
+   UINT16                   OptionNumber;
+   UINTN                    DeviceIndex;
+ 
+-  SetMem (DeviceTypeIndex, sizeof (DeviceTypeIndex), 0xFF);
++  MySetMem (DeviceTypeIndex, sizeof (DeviceTypeIndex), 0xFF);
+ 
+   for (Index = 0; Index < BootOptionCount; Index++) {
+ 
+@@ -611,7 +632,7 @@
+       // insert the current boot option before *NextIndex, causing [*Next .. Index] shift right one position
+       //
+       OptionNumber = BootOption[Index];
+-      CopyMem (&BootOption[*NextIndex + 1], &BootOption[*NextIndex], (Index - *NextIndex) * sizeof (UINT16));
++      MyCopyMem (&BootOption[*NextIndex + 1], &BootOption[*NextIndex], (Index - *NextIndex) * sizeof (UINT16));
+       BootOption[*NextIndex] = OptionNumber;
+ 
+       //
+--- a/filesystems/fsw_efi.h
++++ b/filesystems/fsw_efi.h
+@@ -42,7 +42,13 @@
+ #include "../include/refit_call_wrapper.h"
+ 
+ #ifdef __MAKEWITH_GNUEFI
+-#define CompareGuid(a, b) CompareGuid(a, b)==0
++// GNU-EFI 4.0 turned CompareGuid into a macro (which this one used to shadow
++// by self-reference) and marked its function EFIAPI, i.e. the Microsoft x64
++// ABI that direct calls from this SysV-compiled code do not satisfy. Do the
++// comparison here; CompareMem is not EFIAPI-marked. Semantics unchanged:
++// true when the two GUIDs are equal.
++#undef CompareGuid
++#define CompareGuid(a, b) (CompareMem((a), (b), 16) == 0)
+ #endif
+ 
+ #define REFIND_EFI_DISK_IO_PROTOCOL_GUID \
+--- a/gptsync/gptsync.c
++++ b/gptsync/gptsync.c
+@@ -164,7 +164,9 @@
+     }
+     if (!have_bootcode) {
+         // no boot code found in the MBR, add the syslinux MBR code
+-        SetMem(sector, MBR_BOOTCODE_SIZE, 0);
++        // (GNU-EFI 4.0 marks SetMem EFIAPI - fill the buffer here instead)
++        for (i = 0; i < MBR_BOOTCODE_SIZE; i++)
++            sector[i] = 0;
+         refit_call3_wrapper(gBS->CopyMem, sector, syslinux_mbr, SYSLINUX_MBR_SIZE);
+     }
+ 
+--- a/libeg/lodepng_xtra.c
++++ b/libeg/lodepng_xtra.c
+@@ -87,7 +87,7 @@
+ } // int MyStrlen()
+ 
+ VOID *MyMemSet(VOID *s, int c, size_t n) {
+-    SetMem(s, c, n);
++    MySetMem(s, n, (UINT8) c);
+     return s;
+ }
+ 
+--- a/Make.common
++++ b/Make.common
+@@ -84,6 +84,9 @@
+ 
+ # ...for GNU-EFI....
+ GNUEFI_CFLAGS   = -fpic -I$(EFIINC) -I$(EFIINC)/$(ARCH) -I$(EFIINC)/protocol -I../include -I../refind -I../libeg -I../mok -I../gzip
++# GNU-EFI 3.0.18 changed ReallocatePool's argument order; select the legacy
++# ABI, which rEFInd's EfiLib/legacy.c calls were written against.
++GNUEFI_CFLAGS  += -DGNU_EFI_USE_REALLOCATEPOOL_ABI=0
+ 
+ # ...and for TianoCore....
+ TIANO_INCLUDE_DIRS = -I $(TIANOBASE)/MdePkg \
+@@ -123,6 +126,13 @@
+ 
+ FORMAT          = --target=efi-app-$(ARCH)
+ FORMAT_DRIVER   = --target=efi-bsdrv-$(ARCH)
++ifeq ($(ARCH),x86_64)
++# binutils 2.42 removed the efi-app-*/efi-bsdrv-* objcopy output targets;
++# produce the same PE32+ EFI images via the pei-x86-64 target with the EFI
++# subsystems (10 = application, 11 = boot-service driver).
++FORMAT          = -O pei-x86-64 --subsystem 10:3
++FORMAT_DRIVER   = -O pei-x86-64 --subsystem 11:3
++endif
+ 
+ #
+ # Modifications on a per-architecture basis....
+--- a/refind/config.c
++++ b/refind/config.c
+@@ -667,7 +667,7 @@
+             HandleStrings(TokenList, TokenCount, &(GlobalConfig.DriverDirs));
+ 
+         } else if (MyStriCmp(TokenList[0], L"showtools")) {
+-            SetMem(GlobalConfig.ShowTools, NUM_TOOLS * sizeof(UINTN), 0);
++            MySetMem(GlobalConfig.ShowTools, NUM_TOOLS * sizeof(UINTN), 0);
+             GlobalConfig.HiddenTags = FALSE;
+             for (i = 1; (i < TokenCount) && (i < NUM_TOOLS); i++) {
+                 FlagName = TokenList[i];
+--- a/refind/driver_support.c
++++ b/refind/driver_support.c
+@@ -235,27 +235,27 @@
+ 
+       for (ProtocolIndex = 0; ProtocolIndex < ArrayCount; ProtocolIndex++) {
+ 
+-        if (CompareGuid (ProtocolGuidArray[ProtocolIndex], &gMyEfiLoadedImageProtocolGuid) == 0) {
++        if (GuidsAreEqual (ProtocolGuidArray[ProtocolIndex], &gMyEfiLoadedImageProtocolGuid)) {
+           (*HandleType)[HandleIndex] |= EFI_HANDLE_TYPE_IMAGE_HANDLE;
+         }
+ 
+-        if (CompareGuid (ProtocolGuidArray[ProtocolIndex], &gMyEfiDriverBindingProtocolGuid) == 0) {
++        if (GuidsAreEqual (ProtocolGuidArray[ProtocolIndex], &gMyEfiDriverBindingProtocolGuid)) {
+           (*HandleType)[HandleIndex] |= EFI_HANDLE_TYPE_DRIVER_BINDING_HANDLE;
+         }
+ 
+-        if (CompareGuid (ProtocolGuidArray[ProtocolIndex], &gMyEfiDriverConfigurationProtocolGuid) == 0) {
++        if (GuidsAreEqual (ProtocolGuidArray[ProtocolIndex], &gMyEfiDriverConfigurationProtocolGuid)) {
+           (*HandleType)[HandleIndex] |= EFI_HANDLE_TYPE_DRIVER_CONFIGURATION_HANDLE;
+         }
+ 
+-        if (CompareGuid (ProtocolGuidArray[ProtocolIndex], &gMyEfiDriverDiagnosticsProtocolGuid) == 0) {
++        if (GuidsAreEqual (ProtocolGuidArray[ProtocolIndex], &gMyEfiDriverDiagnosticsProtocolGuid)) {
+           (*HandleType)[HandleIndex] |= EFI_HANDLE_TYPE_DRIVER_DIAGNOSTICS_HANDLE;
+         }
+ 
+-        if (CompareGuid (ProtocolGuidArray[ProtocolIndex], &gMyEfiComponentNameProtocolGuid) == 0) {
++        if (GuidsAreEqual (ProtocolGuidArray[ProtocolIndex], &gMyEfiComponentNameProtocolGuid)) {
+           (*HandleType)[HandleIndex] |= EFI_HANDLE_TYPE_COMPONENT_NAME_HANDLE;
+         }
+ 
+-        if (CompareGuid (ProtocolGuidArray[ProtocolIndex], &gMyEfiDevicePathProtocolGuid) == 0) {
++        if (GuidsAreEqual (ProtocolGuidArray[ProtocolIndex], &gMyEfiDevicePathProtocolGuid)) {
+           (*HandleType)[HandleIndex] |= EFI_HANDLE_TYPE_DEVICE_HANDLE;
+         }
+         //
+--- a/refind/launch_legacy.c
++++ b/refind/launch_legacy.c
+@@ -114,7 +114,7 @@
+     }
+     if (!HaveBootCode) {
+         // no boot code found in the MBR, add the syslinux MBR code
+-        SetMem(SectorBuffer, MBR_BOOTCODE_SIZE, 0);
++        MySetMem(SectorBuffer, MBR_BOOTCODE_SIZE, 0);
+         MyCopyMem(SectorBuffer, syslinux_mbr, SYSLINUX_MBR_SIZE);
+     }
+ 
+--- a/refind/lib.c
++++ b/refind/lib.c
+@@ -69,7 +69,26 @@
+ #include "mystrings.h"
+ 
+ #ifdef __MAKEWITH_GNUEFI
+-#define EfiReallocatePool ReallocatePool
++// GNU-EFI 4.0 marks ReallocatePool EFIAPI, and distributions build its library
++// with GNU_EFI_USE_MS_ABI=1 (the Microsoft x64 ABI); calling it from this
++// SysV-compiled code passes the arguments in the wrong registers (measured:
++// AddListElement() silently loses the list when it grows past 16 elements).
++// Do the work here instead, with the same semantics as gnu-efi's: allocate a
++// new pool, copy the common prefix, and free the old pool even when the new
++// allocation failed.
++static VOID *EfiReallocatePool(VOID *OldPool, UINTN OldSize, UINTN NewSize) {
++    VOID *NewPool;
++
++    NewPool = NULL;
++    if (NewSize != 0)
++        NewPool = AllocatePool(NewSize);
++    if (OldPool != NULL) {
++        if (NewPool != NULL)
++            MyCopyMem(NewPool, OldPool, OldSize < NewSize ? OldSize : NewSize);
++        MyFreePool(OldPool);
++    }
++    return NewPool;
++}
+ #else
+ #define LibLocateHandle gBS->LocateHandleBuffer
+ #define DevicePathProtocol gEfiDevicePathProtocolGuid
+@@ -651,7 +670,7 @@
+ 
+     LOG(2, LOG_LINE_NORMAL, L"Identifying filesystem types....");
+     if ((Buffer != NULL) && (Volume != NULL)) {
+-        SetMem(&(Volume->VolUuid), sizeof(EFI_GUID), 0);
++        MySetMem(&(Volume->VolUuid), sizeof(EFI_GUID), 0);
+         Volume->FSType = FS_TYPE_UNKNOWN;
+ 
+         if (BufferSize >= (1024 + 100)) {
+--- a/refind/lib.h
++++ b/refind/lib.h
+@@ -139,6 +139,19 @@
+ #define MyCopyMem(Dest, Src, len) CopyMem(Dest, Src, len)
+ #endif
+ 
++// GNU-EFI 4.0 marks SetMem EFIAPI, and distributions build its library with
++// GNU_EFI_USE_MS_ABI=1 (the Microsoft x64 ABI); calling it from this
++// SysV-compiled code passes the arguments in the wrong registers. Fill the
++// memory here instead. (-fno-tree-loop-distribute-patterns keeps this loop
++// from being replaced with a memset() call, which has no implementation
++// here.)
++static inline VOID MySetMem(VOID *Buffer, UINTN Size, UINT8 Data) {
++    UINT8 *Byte;
++
++    for (Byte = Buffer; Size > 0; Size--)
++        *Byte++ = Data;
++}
++
+ BOOLEAN EjectMedia(VOID);
+ 
+ BOOLEAN GuidsAreEqual(EFI_GUID *Guid1, EFI_GUID *Guid2);

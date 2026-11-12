@@ -1,0 +1,92 @@
+# Maintainer: Aelum <packager@aelum.dev>
+# Upstream 0.14.2 with the submenu-scrolling patch, published to the [aelum]
+# repo as a drop-in replacement for extra/refind. What makes pacman pick OURS
+# is repository ORDER — with one name in two enabled repos, the repo listed
+# first in pacman.conf wins even against a higher version elsewhere (measured
+# with pacman 7.1; the installer and the ISO build both list [aelum] before
+# [extra]). pkgrel still stays above extra's (0.14.2-3 as of Nov 2026) so
+# hand-enabled repos and older configs prefer ours too.
+pkgbase=refind
+pkgname=(refind refind-docs)
+pkgver=0.14.2
+pkgrel=4
+pkgdesc="An EFI boot manager (Aelum: scrollable graphical submenus)"
+arch=(x86_64)
+url="https://www.rodsbooks.com/refind/"
+makedepends=(bash dosfstools efibootmgr gnu-efi)
+source=(https://sourceforge.net/projects/refind/files/$pkgver/refind-src-$pkgver.tar.gz
+        refind-0.14.2-gnuefi4-compat.patch
+        refind-0.14.2-submenu-scrolling.patch)
+sha256sums=('f7d93ce80da76b86c567281ea225b6a87907ce86ff77233c9357a522c115c8f0'
+            '77130d4f0e8d43499b57059c72d27c575fb7ee9abcd75e2bdc257c246b299278'
+            '0fdd4e6f575ced506f4499eea9a415757eec03f9658dee95a44709cb23c99837')
+_arch='x64'
+
+prepare() {
+  cd $pkgbase-$pkgver
+  # build against gnu-efi 4.0 + binutils >= 2.42: objcopy targets, the
+  # duplicate AsciiStrLen, and the EFIAPI call-site fixes (gnu-efi's library
+  # is built with the Microsoft x64 ABI; rEFInd's direct SetMem/CopyMem/
+  # CompareGuid/ReallocatePool calls pass SysV registers — a menu list
+  # growing past 16 entries silently loses its parent entry)
+  patch -p1 -i ../refind-0.14.2-gnuefi4-compat.patch
+  # the Aelum feature: graphical submenus scroll instead of overflowing
+  patch -p1 -i ../refind-0.14.2-submenu-scrolling.patch
+  # remove the path prefix from the css reference, so that the css can live
+  # in the same directory
+  sed -e 's|../Styles/||g' -i docs/$pkgbase/*.html
+  # hardcode RefindDir, so that refind-install can find refind_x64.efi
+  sed -e 's|RefindDir=\"\$ThisDir/refind\"|RefindDir="/usr/share/refind/"|g' -i refind-install
+  # add vendor line to the sbat file
+  printf 'refind.%s,%s,%s,refind,%s,%s\n' 'aelum' '1' 'Aelum' "${epoch:+${epoch}:}${pkgver}-${pkgrel}" 'https://aelum.dev' >> refind-sbat.csv
+}
+
+build() {
+  cd $pkgname-$pkgver
+  make
+  make gptsync
+  make fs
+}
+
+package_refind() {
+  license=(BSD CCPL GPL2 GPL3 LGPL3)
+  depends=(bash dosfstools efibootmgr)
+  optdepends=(
+    'gptfdisk: for finding non-vfat ESP with refind-install'
+    'imagemagick: for refind-mkfont'
+    'openssl: for generating local certificates with refind-install'
+    'python: for refind-mkdefault'
+    'refind-docs: for HTML documentation'
+    'sbsigntools: for EFI binary signing with refind-install'
+    'sudo: for privilege elevation with refind-install and refind-mkdefault'
+  )
+
+  cd $pkgbase-$pkgver
+  # NOTE: the install target calls refind-install, therefore install manually
+  install -vDm 644 refind/*.efi -t "$pkgdir/usr/share/$pkgname/"
+  install -vDm 644 drivers_*/*.efi -t "$pkgdir/usr/share/refind/drivers_$_arch/"
+  install -vDm 644 gptsync/*.efi -t "$pkgdir/usr/share/$pkgname/tools_$_arch/"
+  install -vDm 644 $pkgname.conf-sample -t "$pkgdir/usr/share/$pkgname/"
+  install -vDm 644 keys/*{cer,crt} -t "$pkgdir/usr/share/$pkgname/keys/"
+  install -vdm 700 "$pkgdir/etc/refind.d/keys"
+  install -vDm 644 fonts/*.png -t "$pkgdir/usr/share/$pkgname/fonts/"
+  install -vDm 644 icons/*.png -t "$pkgdir/usr/share/$pkgname/icons"
+  install -vDm 644 icons/svg/*.svg -t "$pkgdir/usr/share/$pkgname/icons/svg/"
+  install -vDm 755 {refind-{install,mkdefault,sb-healthcheck},mkrlconf,mvrefind} -t "$pkgdir/usr/bin/"
+  install -vDm 755 fonts/mkfont.sh "$pkgdir/usr/bin/$pkgname-mkfont"
+  install -vDm 644 docs/man/*.8 -t "$pkgdir/usr/share/man/man8/"
+  install -vDm 644 {CREDITS,NEWS,README}.txt -t "$pkgdir/usr/share/doc/$pkgname/"
+  install -vDm 644 fonts/README.txt "$pkgdir/usr/share/doc/$pkgname/README.$pkgname-mkfont.txt"
+  install -vDm 644 icons/README "$pkgdir/usr/share/doc/$pkgname/README.icons.txt"
+  install -vDm 644 keys/README.txt "$pkgdir/usr/share/doc/$pkgname/README.keys.txt"
+  install -vDm 644 LICENSE.txt -t "$pkgdir/usr/share/licenses/$pkgname/"
+}
+
+package_refind-docs() {
+  pkgdesc+=" - documentation"
+  license=(FDL1.3)
+  cd $pkgbase-$pkgver
+  install -vDm 644 docs/$pkgbase/*.{html,png,svg,txt} -t "$pkgdir/usr/share/doc/$pkgbase/html/"
+  install -vDm 644 docs/Styles/*.css -t "$pkgdir/usr/share/doc/$pkgbase/html/"
+  install -vDm 644 images/$pkgbase-banner.{png,svg} -t "$pkgdir/usr/share/doc/$pkgbase/html/"
+}

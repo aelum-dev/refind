@@ -1,0 +1,125 @@
+--- a/refind/menu.c
++++ b/refind/menu.c
+@@ -910,10 +910,13 @@
+ }
+ 
+ // Compute the size & position of the window that will hold a subscreen's information.
++// Also compute VisibleRows: the number of entry rows the window can actually hold,
++// which is what the entry list scrolls against.
+ static VOID ComputeSubScreenWindowSize(REFIT_MENU_SCREEN *Screen, IN SCROLL_STATE *State,
+                                        UINTN *XPos, UINTN *YPos,
+-                                       UINTN *Width, UINTN *Height, UINTN *LineWidth) {
+-    UINTN i, ItemWidth, HintTop, BannerBottomEdge, TitleWidth;
++                                       UINTN *Width, UINTN *Height, UINTN *LineWidth,
++                                       UINTN *VisibleRows) {
++    UINTN i, ItemWidth, HintTop, BannerBottomEdge, TitleWidth, OverheadRows;
+     UINTN FontCellWidth = egGetFontCellWidth();
+     UINTN FontCellHeight = egGetFontHeight();
+ 
+@@ -967,10 +970,20 @@
+         BannerBottomEdge = 0;
+     }
+     if (*Height > (HintTop - BannerBottomEdge - FontCellHeight * 2)) {
+-        // TODO: Implement scrolling in text screen.
+         *Height = (HintTop - BannerBottomEdge - FontCellHeight * 2);
+     }
+ 
++    // The window holds whole text lines; the rows it holds less those reserved
++    // for the title, spacing, info lines, and margins are the rows that can
++    // hold entries. A list longer than that scrolls (see GraphicsMenuStyle),
++    // with State->FirstVisible naming the first entry the window shows.
++    OverheadRows = 5 + Screen->InfoLineCount;
++    *VisibleRows = *Height / TextLineHeight();
++    if (*VisibleRows > OverheadRows)
++        *VisibleRows -= OverheadRows;
++    else
++        *VisibleRows = 1;
++
+     *YPos = ((UGAHeight - *Height) / 2);
+     if (*YPos < BannerBottomEdge)
+         *YPos = BannerBottomEdge + FontCellHeight + (HintTop - BannerBottomEdge - *Height) / 2;
+@@ -984,6 +997,7 @@
+ {
+     INTN i;
+     UINTN ItemWidth;
++    UINTN VisibleRows, VisibleCount;
+     static UINTN LineWidth, MenuWidth, MenuHeight, EntriesPosX, TitlePosX, EntriesPosY, TimeoutPosY, CharWidth;
+     EG_IMAGE *Window;
+     EG_PIXEL *BackgroundPixel = &(GlobalConfig.ScreenBackground->PixelData[0]);
+@@ -994,8 +1008,15 @@
+ 
+         case MENU_FUNCTION_INIT:
+             InitScroll(State, Screen->EntryCount, 0);
+-            ComputeSubScreenWindowSize(Screen, State, &EntriesPosX, &EntriesPosY, &MenuWidth, &MenuHeight, &LineWidth);
+-            TimeoutPosY = EntriesPosY + (Screen->EntryCount + 1) * TextLineHeight();
++            ComputeSubScreenWindowSize(Screen, State, &EntriesPosX, &EntriesPosY, &MenuWidth, &MenuHeight, &LineWidth, &VisibleRows);
++            // InitScroll's MaxVisible is an estimate for a text-mode console;
++            // in graphics mode the window's measured capacity is the truth.
++            State->MaxVisible = (INTN) VisibleRows;
++            State->LastVisible = State->FirstVisible + State->MaxVisible - 1;
++            VisibleCount = Screen->EntryCount;
++            if (VisibleCount > (UINTN) State->MaxVisible)
++                VisibleCount = (UINTN) State->MaxVisible;
++            TimeoutPosY = EntriesPosY + (VisibleCount + 1) * TextLineHeight();
+ 
+             // initial painting
+             SwitchToGraphicsAndClear();
+@@ -1023,7 +1044,7 @@
+ 
+         case MENU_FUNCTION_PAINT_ALL:
+            ComputeSubScreenWindowSize(Screen, State, &EntriesPosX, &EntriesPosY,
+-                                      &MenuWidth, &MenuHeight, &LineWidth);
++                                      &MenuWidth, &MenuHeight, &LineWidth, &VisibleRows);
+            DrawText(Screen->Title, FALSE, (StrLen(Screen->Title) + 2) * CharWidth,
+                     TitlePosX, EntriesPosY += TextLineHeight());
+            if (Screen->TitleImage) {
+@@ -1041,8 +1062,24 @@
+                EntriesPosY += TextLineHeight();  // also add a blank line
+            }
+ 
+-           for (i = 0; i <= State->MaxIndex; i++) {
++           // Draw only the visible window of the list, positioned relative to
++           // its first entry; State->FirstVisible is maintained by
++           // AdjustScrollState(), which UpdateScroll() calls in text-scroll
++           // mode (set above), so arrow keys, Page Up/Down, Home, and End all
++           // move the window as needed.
++           for (i = State->FirstVisible; (i <= State->MaxIndex) && (i <= State->LastVisible); i++) {
+               DrawText(Screen->Entries[i]->Title, (i == State->CurrentSelection), LineWidth, EntriesPosX,
++                       EntriesPosY + (i - State->FirstVisible) * TextLineHeight());
++           }
++           // scrolling indicators, in the window's right margin, as the
++           // text-mode menu draws its arrows
++           if (State->FirstVisible > 0)
++              DrawText(L"^", FALSE, 2 * CharWidth, EntriesPosX + LineWidth - 2 * CharWidth, EntriesPosY);
++           if (State->LastVisible < State->MaxIndex) {
++              i = State->MaxIndex - State->FirstVisible;
++              if (i > State->MaxVisible - 1)
++                  i = State->MaxVisible - 1;
++              DrawText(L"v", FALSE, 2 * CharWidth, EntriesPosX + LineWidth - 2 * CharWidth,
+                        EntriesPosY + i * TextLineHeight());
+            }
+            if (!(GlobalConfig.HideUIFlags & HIDEUI_FLAG_HINTS)) {
+@@ -1056,11 +1093,20 @@
+            break;
+ 
+         case MENU_FUNCTION_PAINT_SELECTION:
+-            // redraw selection cursor
++            if ((State->PreviousSelection < State->FirstVisible) ||
++                (State->PreviousSelection > State->LastVisible) ||
++                (State->CurrentSelection < State->FirstVisible) ||
++                (State->CurrentSelection > State->LastVisible)) {
++                // a selection outside the visible window means the list has
++                // scrolled; redraw it at its new offset
++                GraphicsMenuStyle(Screen, State, MENU_FUNCTION_PAINT_ALL, ParamText);
++                break;
++            }
++            // redraw selection cursor, relative to the visible window
+             DrawText(Screen->Entries[State->PreviousSelection]->Title, FALSE, LineWidth,
+-                     EntriesPosX, EntriesPosY + State->PreviousSelection * TextLineHeight());
++                     EntriesPosX, EntriesPosY + (State->PreviousSelection - State->FirstVisible) * TextLineHeight());
+             DrawText(Screen->Entries[State->CurrentSelection]->Title, TRUE, LineWidth,
+-                     EntriesPosX, EntriesPosY + State->CurrentSelection * TextLineHeight());
++                     EntriesPosX, EntriesPosY + (State->CurrentSelection - State->FirstVisible) * TextLineHeight());
+             break;
+ 
+         case MENU_FUNCTION_PAINT_TIMEOUT:
