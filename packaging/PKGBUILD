@@ -9,7 +9,7 @@
 pkgbase=refind
 pkgname=(refind refind-docs)
 pkgver=0.14.2
-pkgrel=4
+pkgrel=5
 pkgdesc="An EFI boot manager (Aelum: scrollable graphical submenus)"
 arch=(x86_64)
 url="https://www.rodsbooks.com/refind/"
@@ -19,7 +19,7 @@ source=(https://sourceforge.net/projects/refind/files/$pkgver/refind-src-$pkgver
         refind-0.14.2-submenu-scrolling.patch)
 sha256sums=('f7d93ce80da76b86c567281ea225b6a87907ce86ff77233c9357a522c115c8f0'
             '77130d4f0e8d43499b57059c72d27c575fb7ee9abcd75e2bdc257c246b299278'
-            '0fdd4e6f575ced506f4499eea9a415757eec03f9658dee95a44709cb23c99837')
+            'c80ca7bc91c1e505ac92a010df17929b62800d4bddd9d83761776246dc4a2f9a')
 _arch='x64'
 
 prepare() {

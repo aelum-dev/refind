@@ -99,10 +99,56 @@ does NOT ship in today's extra/refind. What remains true: upstream rEFInd
 any rebuild of plain upstream — ours included — needs the call-site fixes;
 the compat patch is our independent, verified path to that build.
 
+## Subscreen window height vs a `fillscreen` banner (measured Nov 2026)
+
+The Aelum theme draws its lockup *in the banner* (`theme.conf`:
+`banner themes/aelum/background.png` + `banner_scale fillscreen`), so a long
+snapshot submenu grew up through it and cut it in half. Measured cause:
+
+- `banner_scale fillscreen` scales the image to the screen, so `screen.c:478`
+  records `BannerBottomEdge = UGAHeight`. `menu.c`'s `ComputeSubScreenWindowSize`
+  then takes its own `BannerBottomEdge >= HintTop` branch — "probably a
+  full-screen image; treat it as an empty banner" — and reserves nothing. That
+  branch is written for a photographic background, where there is no artwork band
+  to avoid.
+- Once the list exceeds the window, the height clamps to `HintTop - 2·fontH` and
+  `YPos = (UGAHeight - Height) / 2`, which reduces to **2.5 × font height from
+  the top** — at every resolution, because it is a multiple of the font.
+- The theme's artwork is a *screen* fraction instead: `gen-refind-theme.py` puts
+  the lockup at y=108..236 of a 3840x2160 image, i.e. 5%–11% of the display, and
+  a fillscreen banner is scaled to the display. So the two rules collide at every
+  mode a real machine uses: 1366x768 → 70 vs 84; 1920x1080 → 70 vs 118;
+  3840x2160 → 140 vs 236 (the installer selects `font-2x.png` at ≥1921px, which
+  does not save the small modes — the font does not scale below that).
+- A theme-side fix is impossible for the same reason: shrinking the lockup until
+  it fits under 2.5 font heights works at 4K and fails at 1366x768, where the
+  free band (70px) is smaller than the artwork needs (84px) even flush with the
+  top edge.
+- Fix applied: cap `*Height` at `UGAHeight * 2 / 3` before the banner clamps.
+  Centering a 2/3-height window leaves 1/6 of the screen clear above and below it
+  at any mode — a proportion rEFInd's own comment already states for the window's
+  width. The list scrolls against the smaller window. Cost, computed at 1080p with
+  the shipped 1x font: ~17 entry rows instead of ~24.
+- The scroll indicators are drawn at `LineWidth - 2·CharWidth`, i.e. in the two
+  cells the text field reserves past the longest entry. With the upstream `+2`
+  that is exactly the marker's own width, so a full-length entry butts into it
+  ("… 4:11 PM - singl v"). Reserve three cells.
+
+Proof (`tests/test-scroll.sh`): the fixture banner is the theme's #141218 field
+with a solid white band at 5%–11% of the screen height. The subscreen window is
+filled with the banner's own corner colour, so the only sign of an overlap is the
+band losing pixels the main-menu frame had. Measured at 1024x768, 40
+`submenuentry` blocks: baseline covers **11039 of 11562** band pixels in every
+submenu frame; the patched build covers **0**, top/End/Home alike.
+
 ## rEFInd 0.14.2 fixture quirks
 
 - `resolution 1024 768` — two tokens. `1024x768` parses as "1024 x 0" and
   "Error setting graphics mode".
+- ramfb's GOP offers **1024x768 and nothing larger**: `resolution 1920 1080`
+  logs "Error setting graphics mode 1920 x 1080; using default mode!" and the
+  session runs at 800x600, which silently moves every pixel coordinate a test
+  measures. `test-scroll.sh` asserts each frame is exactly XRES×YRES.
 - rEFInd forces `textonly = TRUE` when no `icons` directory sits next to
   `refind.conf` (config.c: "Icons directory doesn't exist"). Copy `icons/` into the
   ESP or the graphics menu never runs.

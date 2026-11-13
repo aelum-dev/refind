@@ -26,7 +26,12 @@ expensive way is avoidable.
    overflow markers, and re-paints through PAINT_ALL when the selection
    leaves the window. It reuses rEFInd's own `SCROLL_MODE_TEXT` state machine
    (`AdjustScrollState`/`UpdateScroll` are already called for every menu), so
-   arrows/Home/End/PageUp/PageDown come free.
+   arrows/Home/End/PageUp/PageDown come free. Two layout fixes ride along, both
+   measured in NOTES.md: the window is capped at 2/3 of the screen height (an
+   uncapped one under a `banner_scale fillscreen` banner starts at 2.5 font
+   heights from the top and cut the theme's lockup in half at every common
+   mode), and the text field reserves one cell more so the `^`/`v` markers get a
+   margin instead of butting into a full-length entry.
 2. **The gnu-efi 4.0.4 ABI bug** (`refind-<ver>-gnuefi4-compat.patch`):
    Arch builds libefi.a with `GNU_EFI_USE_MS_ABI=1`; rEFInd compiles with
    `EFIAPI`=empty and calls `SetMem`/`CopyMem`/`CompareGuid`/`ReallocatePool`
@@ -93,8 +98,32 @@ Files the container writes are root-owned; the scripts chown to 1000:1000.
 `tests/test-scroll.sh` needs host `qemu-system-x86_64`, OVMF (`/usr/share/OVMF/x64/`),
 `python3` with Pillow, and `../docker/scripts/qemu-mon.py` (overridable via
 `QMON=`). What "passing" looks like: baseline frames show the list overflowing
-the screen with the selection off-screen after End; patched frames show the
-window scrolled with `^`/`v` markers and the selection visible.
+the screen with the selection off-screen after End, and its window covering the
+fixture banner's artwork band; patched frames show the window scrolled with
+`^`/`v` markers, the selection visible, and that band untouched — the script
+counts the band's pixels in every frame and exits non-zero if the window covered
+any of them.
+
+## Testing a change on an installed system
+
+`make -C docker install-pkg PKG=refind/dist/<pkg>` is not enough. The firmware boots the
+**ESP's own copy** of the binary, which the installer wrote once: `pacman -U` replaces
+`/usr/share/refind/refind_x64.efi` and leaves `/efi/EFI/refind/refind_x64.efi` exactly as it
+was (measured Nov 2026: package 0.14.2-5 installed, the ESP still held the 0.14.2-4 binary by
+sha256, mtime = install time). The package ships no hook and no scriptlet for this — Arch's
+`refind` doesn't either; its PKGBUILD says the install target calls `refind-install`, "therefore
+install manually". So refresh it from the live ISO before re-shooting the menu:
+
+```bash
+make -C docker test-boot
+ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@localhost \
+  'mount /dev/vda2 /mnt; mount /dev/vda1 /mnt/efi;
+   cp /mnt/usr/share/refind/refind_x64.efi /mnt/efi/EFI/refind/refind_x64.efi; umount -R /mnt; poweroff'
+./docker/scripts/menu-shots.sh        # and demo-snapshots EXTRA=40 to overflow the submenu
+```
+
+The same gap is a user-visible one, not just a test one: an installed system that updates
+`refind` from `[aelum]` keeps booting the old binary until something rewrites the ESP copy.
 
 ## Upgrading rEFInd
 

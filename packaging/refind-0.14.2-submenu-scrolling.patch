@@ -16,7 +16,39 @@
      UINTN FontCellWidth = egGetFontCellWidth();
      UINTN FontCellHeight = egGetFontHeight();
  
-@@ -967,10 +970,20 @@
+@@ -935,7 +938,10 @@
+          }
+          (*Height)++;
+     }
+-    *Width = (*Width + 2) * FontCellWidth;
++    // Three cells past the longest entry: the scroll indicators are drawn in
++    // this field's right margin, two cells wide, so with only two reserved a
++    // full-length entry butts into the marker and reads as part of its text.
++    *Width = (*Width + 3) * FontCellWidth;
+     *LineWidth = *Width;
+     if (Screen->TitleImage)
+         *Width += (Screen->TitleImage->Width + TITLEICON_SPACING * 2 + FontCellWidth);
+@@ -957,6 +963,19 @@
+     if (Screen->TitleImage && (*Height < (Screen->TitleImage->Height + TextLineHeight() * 4)))
+         *Height = Screen->TitleImage->Height + TextLineHeight() * 4;
+ 
++    // Cap the window at 2/3 of the screen height - the proportion the comment
++    // above already states for the window's width. Every other limit here is a
++    // multiple of the font, which does not scale with the display, while a
++    // banner_scale fillscreen image is scaled to it: its artwork therefore
++    // occupies a fixed fraction of the screen (the Aelum theme's lockup sits at
++    // 5%-11% of the image height), and an uncapped window starts at 2.5 font
++    // heights from the top - above that band at 1366x768, 1080p and 4K alike,
++    // so it cut the lockup in half. Centering a 2/3-height window leaves 1/6 of
++    // the screen clear above and below it at any mode, and the list scrolls
++    // against the smaller window instead (VisibleRows below).
++    if (*Height > (UGAHeight * 2) / 3)
++        *Height = (UGAHeight * 2) / 3;
++
+     if (GlobalConfig.BannerBottomEdge >= HintTop) {
+         // probably a full-screen image; treat it as an empty banner
+         BannerBottomEdge = 0;
+@@ -967,10 +986,20 @@
          BannerBottomEdge = 0;
      }
      if (*Height > (HintTop - BannerBottomEdge - FontCellHeight * 2)) {
@@ -38,7 +70,7 @@
      *YPos = ((UGAHeight - *Height) / 2);
      if (*YPos < BannerBottomEdge)
          *YPos = BannerBottomEdge + FontCellHeight + (HintTop - BannerBottomEdge - *Height) / 2;
-@@ -984,6 +997,7 @@
+@@ -984,6 +1013,7 @@
  {
      INTN i;
      UINTN ItemWidth;
@@ -46,7 +78,7 @@
      static UINTN LineWidth, MenuWidth, MenuHeight, EntriesPosX, TitlePosX, EntriesPosY, TimeoutPosY, CharWidth;
      EG_IMAGE *Window;
      EG_PIXEL *BackgroundPixel = &(GlobalConfig.ScreenBackground->PixelData[0]);
-@@ -994,8 +1008,15 @@
+@@ -994,8 +1024,15 @@
  
          case MENU_FUNCTION_INIT:
              InitScroll(State, Screen->EntryCount, 0);
@@ -64,7 +96,7 @@
  
              // initial painting
              SwitchToGraphicsAndClear();
-@@ -1023,7 +1044,7 @@
+@@ -1023,7 +1060,7 @@
  
          case MENU_FUNCTION_PAINT_ALL:
             ComputeSubScreenWindowSize(Screen, State, &EntriesPosX, &EntriesPosY,
@@ -73,7 +105,7 @@
             DrawText(Screen->Title, FALSE, (StrLen(Screen->Title) + 2) * CharWidth,
                      TitlePosX, EntriesPosY += TextLineHeight());
             if (Screen->TitleImage) {
-@@ -1041,8 +1062,24 @@
+@@ -1041,8 +1078,24 @@
                 EntriesPosY += TextLineHeight();  // also add a blank line
             }
  
@@ -99,7 +131,7 @@
                         EntriesPosY + i * TextLineHeight());
             }
             if (!(GlobalConfig.HideUIFlags & HIDEUI_FLAG_HINTS)) {
-@@ -1056,11 +1093,20 @@
+@@ -1056,11 +1109,20 @@
             break;
  
          case MENU_FUNCTION_PAINT_SELECTION:
